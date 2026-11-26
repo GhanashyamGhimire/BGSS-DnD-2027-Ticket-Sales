@@ -1616,7 +1616,7 @@
           <div class="field" id="member-contact-wrap" hidden>
             <label class="f-label" for="bk-contact">Contact number (WhatsApp)</label>
             <input type="tel" id="bk-contact" autocomplete="tel" placeholder="e.g. 9XXX XXXX" />
-            <p class="onfile-note" id="onfile-note" hidden>We have your number on file — this is just to confirm it's you.</p>
+            <p class="onfile-note" id="onfile-note" hidden>We have a number on file for you (it ends in the digits shown beside your name) — please type your full WhatsApp number here so we can send you your ticket numbers.</p>
             <p class="onfile-note" id="nophone-note" hidden>We don't have a number on file for you yet — please type your WhatsApp number so we can send you your ticket numbers.</p>
           </div>
 
@@ -1739,7 +1739,7 @@
           <div class="field" id="bail-contact-wrap" hidden>
             <label class="f-label" for="bail-contact">Contact number (WhatsApp)</label>
             <input type="tel" id="bail-contact" autocomplete="tel" placeholder="e.g. 9XXX XXXX" />
-            <p class="onfile-note" id="bail-onfile-note" hidden>We have your number on file — this is just to confirm it's you.</p>
+            <p class="onfile-note" id="bail-onfile-note" hidden>We have a number on file for you (it ends in the digits shown beside your name) — please type your full WhatsApp number here so we can reach you about your bail.</p>
             <p class="onfile-note" id="bail-nophone-note" hidden>We don't have a number on file for you yet — please type your WhatsApp number so we can reach you about your bail.</p>
           </div>
 
@@ -2016,15 +2016,22 @@
 
         /* ---------- CONFIG ----------
            APPS_SCRIPT_URL: the BGSS D&D ticket-logging Apps Script web
-           app. The Reserve tap in Step 1 POSTs the pending booking there
-           so it lands in the ticket sales sheet as a placeholder row
-           with Status "Pending", and Step 2 is revealed only once the
-           script confirms the row was written (it answers
-           {"ok":true}). If the sheet can't be reached, the buyer is
-           told plainly and offered a retry — the page never claims a
-           hold it hasn't confirmed. If the URL is ever emptied, the
-           log is skipped and the booking flows on to Step 2 exactly
-           as before. */
+           app. Writes (Reserve holds, bail requests, votes, operator
+           settings) are POSTed there, but the page never trusts the
+           POST's own reply: Apps Script answers a POST with a redirect
+           to a different Google address, and on some networks and
+           browsers that reply never makes it back even though the
+           write itself landed in the sheet (seen in testing on the
+           live GitHub page — bookings and settings saved, yet the
+           page reported "couldn't reach the ticket sheet"). So every
+           write is sent fire-and-forget (see postToSheet) and then
+           confirmed by reading the sheet's own published feeds — the
+           same GET feeds the page already reads successfully for the
+           sold/held lists, the settings gates and the tallies — until
+           the change shows up there (see pollSheetFeed). Only a write
+           the feeds never show is reported as failed. If the URL is
+           ever emptied, writes that have no feed to verify against
+           are skipped and the flow continues as before. */
         var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyV2NQMQb_KOrXPvqTb6Gi7QU-ytzvdPlyHJshpIOvQnK88tbVNUNU6uXfQN2VCMlPG9w/exec";
 
         /* SETTINGS_CSV_URL: published CSV of the "Settings" tab in the
@@ -2059,6 +2066,76 @@
            be reached) the Emcee page shows a plain message and no
            bails at all, rather than stand-in data. */
         var BAILS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSXeTU81q2D1VhBwVfKZw_lr9qs-XXRJFmuKbJYp2f9_zVlZNguAH3ISf35ISUdKCwwJAeepZgaMmMt/pub?gid=883402173&single=true&output=csv";
+
+        /* ---------- sheet writes: send, then verify via the feeds ----------
+           postToSheet POSTs a payload to the Apps Script with
+           mode:"no-cors": the request is delivered and the script
+           runs, but the response is opaque — deliberately unread,
+           because Apps Script's POST reply comes back through a
+           redirect to script.googleusercontent.com, and that reply
+           is exactly what some networks/browsers drop (the write
+           lands; the confirmation doesn't). It resolves "sent" once
+           the request has been dispatched without a network-level
+           failure, "failed" when the request itself couldn't be
+           dispatched, and "skipped" when there is no script URL.
+           Even a "failed" dispatch may have landed, so callers
+           always confirm with pollSheetFeed either way.
+           pollSheetFeed re-reads a published sheet feed every few
+           seconds until check(text) sees the write in it (the
+           published feeds refresh within about a minute of a sheet
+           edit) or the attempts run out — 16 attempts ≈ a minute.
+           It resolves true only when the feed itself shows the
+           change, so the page never claims a write it hasn't seen
+           confirmed in the sheet. */
+        function postToSheet(payload) {
+          if (!APPS_SCRIPT_URL) { return Promise.resolve("skipped"); }
+          if (!window.fetch) { return Promise.resolve("failed"); }
+          var controller = null, timer = null;
+          if (window.AbortController) {
+            controller = new AbortController();
+            timer = setTimeout(function () { controller.abort(); }, 20000);
+          }
+          var opts = {
+            method: "POST",
+            mode: "no-cors",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify(payload)
+          };
+          if (controller) { opts.signal = controller.signal; }
+          return fetch(APPS_SCRIPT_URL, opts).then(function () {
+            return "sent";
+          }).catch(function () {
+            return "failed";
+          }).then(function (state) {
+            if (timer) { clearTimeout(timer); }
+            return state;
+          });
+        }
+        function pollSheetFeed(url, check, attempts, onPolling) {
+          return new Promise(function (resolve) {
+            if (!url || !window.fetch) { resolve(false); return; }
+            var left = attempts;
+            var announced = false;
+            (function attempt() {
+              var sep = url.indexOf("?") === -1 ? "?" : "&";
+              fetch(url + sep + "cb=" + Date.now(), { cache: "no-store" }).then(function (res) {
+                if (!res.ok) { throw new Error("feed fetch failed"); }
+                return res.text();
+              }).then(function (text) {
+                if (check(text || "")) { resolve(true); return; }
+                throw new Error("write not in feed yet");
+              }).catch(function () {
+                left--;
+                if (left <= 0) { resolve(false); return; }
+                if (!announced) {
+                  announced = true;
+                  if (onPolling) { onPolling(); }
+                }
+                setTimeout(attempt, 3500);
+              });
+            })();
+          });
+        }
 
         /* ---------- page views (Home / Pick / Pay) ---------- */
         var homeView = document.getElementById("view-home"),
@@ -2494,9 +2571,11 @@
            of the filtered list, whatever was typed.
            Every picked ticket gets its own picker with the same
            search. Only the buyer's pick (the lowest-numbered ticket)
-           touches the contact field: picking a member auto-fills it
-           with the masked number as a read-only confirmation (members
-           with no phone on file get an empty, editable field), and
+           touches the contact field: picking a member leaves it
+           empty and editable for the buyer to type their real
+           WhatsApp number (the picker's masked tail only identifies
+           the member — it is never copied into the field, because a
+           masked "XXX XXX 148" is useless to the treasurer), and
            picking Guest reveals free-text name + contact fields. A
            Guest pick on any other ticket reveals just a free-text
            name field — the buyer stays the contact point. */
@@ -2619,8 +2698,13 @@
           guestFieldsEl.hidden = true;
           memberContactWrap.hidden = false;
           if (b.selection.masked) {
-            contactEl.value = b.selection.masked;
-            contactEl.readOnly = true;
+            /* We hold only a masked tail for this member, never the
+               full number — leave the field empty for them to type
+               the real number. (This used to pre-fill the masked
+               tail read-only, and that masked text is what landed in
+               the sheet as the booking's contact.) */
+            contactEl.value = "";
+            contactEl.readOnly = false;
             onfileNoteEl.hidden = false;
             nophoneNoteEl.hidden = true;
           } else {
@@ -2929,13 +3013,18 @@
         });
 
         /* ---------- step 1: reserve & confirm the hold with the sheet ----------
-           Reserve POSTs the pending booking to the ticket-logging Apps
-           Script and waits for its answer. Step 2 is revealed only when
-           the script confirms the row was written ({"ok":true}) — a
-           blocked request, no connection, a timeout or an
-           {"ok":false} answer all keep the buyer on Step 1 with a plain
-           error and a Retry button, so the page never claims a hold it
-           hasn't confirmed.
+           Reserve sends the pending booking to the ticket-logging
+           Apps Script (fire-and-forget — see postToSheet) and then
+           confirms the hold by watching the published ticket feed
+           until the picked tickets show up there as Held (or Sold).
+           Step 2 is revealed only once the feed shows the hold —
+           if the write never appears in the feed, the buyer stays
+           on Step 1 with a plain error and a Retry button, so the
+           page never claims a hold it hasn't confirmed. (This flow
+           used to wait for the script's own {"ok":true} reply; on
+           some networks that reply is dropped on its way back even
+           though the booking landed in the sheet, which left buyers
+           stuck on an error while their hold was real.)
            Changing anything that defines the booking — the picked
            tickets, the standard/special split, the name or the contact —
            resets the confirmed state (resetReservation), so the next
@@ -2967,43 +3056,33 @@
           errEl.classList.remove("show");
           renderCapacity();
         }
-        function logBooking(t) {
-          /* Resolves true only when the sheet confirms the booking was
-             logged. With APPS_SCRIPT_URL emptied there is nothing to
+        function logBooking(t, onPolling) {
+          /* Resolves true only when the published ticket feed shows
+             every picked ticket as Held (or Sold) — i.e. the sheet
+             itself confirms the booking was logged. With
+             APPS_SCRIPT_URL emptied there is nothing to log or
              confirm against, so the log is skipped and the booking
              flows on, as documented at the CONFIG block. */
           if (!APPS_SCRIPT_URL) { return Promise.resolve(true); }
           if (!window.fetch) { return Promise.resolve(false); }
-          var controller = null, timer = null;
-          if (window.AbortController) {
-            controller = new AbortController();
-            timer = setTimeout(function () { controller.abort(); }, 20000);
-          }
-          var opts = {
-            method: "POST",
-            headers: { "Content-Type": "text/plain;charset=utf-8" },
-            body: JSON.stringify({
-              name: namesWithTickets(),
-              contact: buyerContact(),
-              tickets: t.list,
-              standard: t.s,
-              special: t.p,
-              total: t.total,
-              paymentRef: "",
-              method: ""
-            })
+          var payload = {
+            name: namesWithTickets(),
+            contact: buyerContact(),
+            tickets: t.list,
+            standard: t.s,
+            special: t.p,
+            total: t.total,
+            paymentRef: "",
+            method: ""
           };
-          if (controller) { opts.signal = controller.signal; }
-          return fetch(APPS_SCRIPT_URL, opts).then(function (res) {
-            if (!res.ok) { throw new Error("booking log failed"); }
-            return res.json();
-          }).then(function (data) {
-            return !!(data && data.ok === true);
-          }).catch(function () {
-            return false;
-          }).then(function (ok) {
-            if (timer) { clearTimeout(timer); }
-            return ok;
+          return postToSheet(payload).then(function () {
+            return pollSheetFeed(SHEET_CSV_URL, function (text) {
+              var data = parseFeed(text);
+              var seen = {};
+              data.sold.forEach(function (n) { seen[n] = true; });
+              data.held.forEach(function (n) { seen[n] = true; });
+              return t.list.every(function (n) { return !!seen[n]; });
+            }, 16, onPolling);
           });
         }
         function revealStep2() {
@@ -3062,7 +3141,9 @@
           reserveBtn.disabled = true;
           reserveBtn.textContent = "Holding your tickets…";
           if (barBtn) { barBtn.disabled = true; }
-          logBooking(t).then(function (ok) {
+          logBooking(t, function () {
+            if (seq === reserveSeq) { reserveBtn.textContent = "Checking the ticket sheet for your hold…"; }
+          }).then(function (ok) {
             if (seq !== reserveSeq) { return; } /* selection changed mid-flight — the reset already restored the UI */
             reserving = false;
             if (barBtn) { barBtn.disabled = false; }
@@ -3075,7 +3156,7 @@
               reserveFailed = true;
               reserveBtn.disabled = false;
               reserveBtn.textContent = "Retry — reserve these tickets";
-              errEl.textContent = "We couldn't reach the ticket sheet, so your tickets aren't held yet. Please check your connection and tap Retry below — once the sheet confirms your hold, the payment step will appear.";
+              errEl.textContent = "We sent your booking to the ticket sheet, but it hasn't shown up there yet, so we can't confirm your hold. Please wait a moment and tap Retry below — once the sheet shows your hold, the payment step will appear.";
               errEl.classList.add("show");
               errEl.scrollIntoView({ block: "center", behavior: "smooth" });
             }
@@ -3268,8 +3349,10 @@
           bailGuestFields.hidden = true;
           bailContactWrap.hidden = false;
           if (bailState.selection.masked) {
-            bailContactEl.value = bailState.selection.masked;
-            bailContactEl.readOnly = true;
+            /* Masked tail only identifies the member — never copy it
+               into the contact field; they type their real number. */
+            bailContactEl.value = "";
+            bailContactEl.readOnly = false;
             bailOnfileNote.hidden = false;
             bailNophoneNote.hidden = true;
           } else {
@@ -3348,35 +3431,35 @@
           if (wrap && !wrap.contains(ev.target)) bailClose();
         });
 
-        /* POSTs the bail request to the same Apps Script the ticket
-           Reserve uses. Resolves true only when the script confirms
-           the row was written ({"ok":true}); with APPS_SCRIPT_URL
-           emptied there is nothing to confirm against, so the log is
-           skipped and the request flows on, exactly like logBooking. */
-        function logBail(payload) {
+        /* Sends the bail request to the same Apps Script the ticket
+           Reserve uses (fire-and-forget — see postToSheet), then
+           confirms it by watching the published Bail requests feed
+           until a row with this name and song shows up there.
+           Resolves true only when the feed shows the request; with
+           APPS_SCRIPT_URL emptied there is nothing to confirm
+           against, so the log is skipped and the request flows on,
+           exactly like logBooking. */
+        function bailInFeed(text, payload) {
+          var nameLc = payload.name.toLowerCase(), songLc = payload.song.toLowerCase();
+          var rows = parseCsv(text || "");
+          for (var i = 0; i < rows.length; i++) {
+            var hasName = false, hasSong = false;
+            for (var j = 0; j < rows[i].length; j++) {
+              var cell = String(rows[i][j] || "").trim().toLowerCase();
+              if (cell === nameLc) { hasName = true; }
+              if (cell === songLc) { hasSong = true; }
+            }
+            if (hasName && hasSong) { return true; }
+          }
+          return false;
+        }
+        function logBail(payload, onPolling) {
           if (!APPS_SCRIPT_URL) { return Promise.resolve(true); }
           if (!window.fetch) { return Promise.resolve(false); }
-          var controller = null, timer = null;
-          if (window.AbortController) {
-            controller = new AbortController();
-            timer = setTimeout(function () { controller.abort(); }, 20000);
-          }
-          var opts = {
-            method: "POST",
-            headers: { "Content-Type": "text/plain;charset=utf-8" },
-            body: JSON.stringify(payload)
-          };
-          if (controller) { opts.signal = controller.signal; }
-          return fetch(APPS_SCRIPT_URL, opts).then(function (res) {
-            if (!res.ok) { throw new Error("bail log failed"); }
-            return res.json();
-          }).then(function (data) {
-            return !!(data && data.ok === true);
-          }).catch(function () {
-            return false;
-          }).then(function (ok) {
-            if (timer) { clearTimeout(timer); }
-            return ok;
+          return postToSheet(payload).then(function () {
+            return pollSheetFeed(BAILS_CSV_URL, function (text) {
+              return bailInFeed(text, payload);
+            }, 16, onPolling);
           });
         }
         bailForm.addEventListener("submit", function (ev) {
@@ -3410,12 +3493,14 @@
           bailSending = true;
           bailSubmitBtn.disabled = true;
           bailSubmitBtn.textContent = "Sending your request…";
-          logBail(payload).then(function (ok) {
+          logBail(payload, function () {
+            if (bailSending) { bailSubmitBtn.textContent = "Checking the sheet for your request…"; }
+          }).then(function (ok) {
             bailSending = false;
             bailSubmitBtn.disabled = false;
             if (!ok) {
               bailSubmitBtn.textContent = "Retry — submit bail request";
-              bailErr.textContent = "We couldn't reach the ticket sheet, so your bail request isn't logged yet. Please check your connection and tap Retry — once it's logged, WhatsApp will open with your request ready to send.";
+              bailErr.textContent = "We sent your bail request to the ticket sheet, but it hasn't shown up there yet, so we can't confirm it's logged. Please wait a moment and tap Retry — once it's logged, WhatsApp will open with your request ready to send.";
               bailErr.classList.add("show");
               bailErr.scrollIntoView({ block: "center", behavior: "smooth" });
               return;
@@ -3702,33 +3787,47 @@
           if (wrap && !wrap.contains(ev.target)) voteClose();
         });
 
-        /* POSTs the vote to the same Apps Script, type:"vote".
-           Resolves true only on an {"ok":true} confirmation, exactly
+        /* Sends the vote to the same Apps Script, type:"vote"
+           (fire-and-forget — see postToSheet), then confirms it via
+           the published Votes feed: the nominee's tally is read
+           BEFORE the vote is sent, and the vote counts as logged
+           only when the feed shows that tally risen. (If the
+           pre-read fails, the first poll after sending sets the
+           baseline instead — a fractionally later confirmation,
+           never a false one from someone else's earlier vote.)
+           With APPS_SCRIPT_URL emptied the log is skipped, exactly
            like the ticket Reserve and bail log. */
-        function logVote(payload) {
+        function logVote(payload, onPolling) {
           if (!APPS_SCRIPT_URL) { return Promise.resolve(true); }
           if (!window.fetch) { return Promise.resolve(false); }
-          var controller = null, timer = null;
-          if (window.AbortController) {
-            controller = new AbortController();
-            timer = setTimeout(function () { controller.abort(); }, 20000);
+          function nomineeCount(text) {
+            var rows = parseTally(text || "");
+            for (var i = 0; i < rows.length; i++) {
+              if (rows[i].name.toLowerCase() === payload.nominee.toLowerCase()) { return rows[i].count; }
+            }
+            return 0;
           }
-          var opts = {
-            method: "POST",
-            headers: { "Content-Type": "text/plain;charset=utf-8" },
-            body: JSON.stringify(payload)
-          };
-          if (controller) { opts.signal = controller.signal; }
-          return fetch(APPS_SCRIPT_URL, opts).then(function (res) {
-            if (!res.ok) { throw new Error("vote log failed"); }
-            return res.json();
-          }).then(function (data) {
-            return !!(data && data.ok === true);
-          }).catch(function () {
-            return false;
-          }).then(function (ok) {
-            if (timer) { clearTimeout(timer); }
-            return ok;
+          function readNomineeCount() {
+            if (!VOTES_CSV_URL) { return Promise.resolve(null); }
+            return fetch(VOTES_CSV_URL + "&cb=" + Date.now(), { cache: "no-store" }).then(function (res) {
+              if (!res.ok) { throw new Error("votes fetch failed"); }
+              return res.text();
+            }).then(function (text) {
+              return nomineeCount(text);
+            }).catch(function () { return null; });
+          }
+          return readNomineeCount().then(function (base) {
+            return postToSheet(payload).then(function () {
+              var baseKnown = base !== null;
+              var baseCount = baseKnown ? base : 0;
+              var seenCount = null;
+              return pollSheetFeed(VOTES_CSV_URL, function (text) {
+                var c = nomineeCount(text);
+                if (baseKnown) { return c > baseCount; }
+                if (seenCount === null) { seenCount = c; return false; }
+                return c > seenCount;
+              }, 16, onPolling);
+            });
           });
         }
         voteForm.addEventListener("submit", function (ev) {
@@ -3756,12 +3855,14 @@
           voteSending = true;
           voteSubmitBtn.disabled = true;
           voteSubmitBtn.textContent = "Sending your vote…";
-          logVote({ type: "vote", nominee: nominee }).then(function (ok) {
+          logVote({ type: "vote", nominee: nominee }, function () {
+            if (voteSending) { voteSubmitBtn.textContent = "Checking the votes sheet…"; }
+          }).then(function (ok) {
             voteSending = false;
             if (!ok) {
               voteSubmitBtn.disabled = false;
               voteSubmitBtn.textContent = "Retry — vote for Best Dressed";
-              voteErr.textContent = "We couldn't reach the votes sheet, so your vote isn't in yet. Please check your connection and tap Retry.";
+              voteErr.textContent = "We sent your vote to the votes sheet, but it hasn't shown up in the tally yet, so we can't confirm it's in. Please wait a moment and tap Retry.";
               voteErr.classList.add("show");
               voteErr.scrollIntoView({ block: "center", behavior: "smooth" });
               return;
@@ -3967,32 +4068,23 @@
             if (opFeedbackState) { opFeedbackState.textContent = feedbackLive ? "Showing" : "Hidden"; }
           }
         }
-        /* Same POST pattern as the booking/bail/vote logs: resolves
-           true only when the script confirms the write ({"ok":true}). */
-        function postSetting(key, value) {
+        /* Sends a setting change to the same Apps Script
+           (fire-and-forget — see postToSheet), then confirms it by
+           watching the published Settings feed until the flag shows
+           the new value there. Resolves true only when the feed
+           itself shows the change — the Home page gates read that
+           same feed, so a confirmed save is a save every visitor
+           will see. (This used to trust the script's {"ok":true}
+           reply, which some networks drop on its way back even
+           though the setting was saved — the operator was told the
+           change failed while the sheet already had it.) */
+        function postSetting(key, value, onPolling) {
           if (!APPS_SCRIPT_URL) { return Promise.resolve(false); }
           if (!window.fetch) { return Promise.resolve(false); }
-          var controller = null, timer = null;
-          if (window.AbortController) {
-            controller = new AbortController();
-            timer = setTimeout(function () { controller.abort(); }, 20000);
-          }
-          var opts = {
-            method: "POST",
-            headers: { "Content-Type": "text/plain;charset=utf-8" },
-            body: JSON.stringify({ type: "setting", key: key, value: value })
-          };
-          if (controller) { opts.signal = controller.signal; }
-          return fetch(APPS_SCRIPT_URL, opts).then(function (res) {
-            if (!res.ok) { throw new Error("setting save failed"); }
-            return res.json();
-          }).then(function (data) {
-            return !!(data && data.ok === true);
-          }).catch(function () {
-            return false;
-          }).then(function (ok) {
-            if (timer) { clearTimeout(timer); }
-            return ok;
+          return postToSheet({ type: "setting", key: key, value: value }).then(function () {
+            return pollSheetFeed(SETTINGS_CSV_URL, function (text) {
+              return parseSettingFlag(text, key) === value;
+            }, 16, onPolling);
           });
         }
         if (opToggle) {
@@ -4003,11 +4095,13 @@
             opToggle.disabled = true;
             opNote.classList.remove("err");
             opNote.textContent = "Saving…";
-            postSetting("bail_visible", next).then(function (ok) {
+            postSetting("bail_visible", next, function () {
+              if (opSaving) { opNote.textContent = "Checking the sheet to confirm the change…"; }
+            }).then(function (ok) {
               opSaving = false;
               opToggle.disabled = false;
               if (!ok) {
-                opNote.textContent = "Couldn't reach the ticket sheet, so that change wasn't saved and the Home page is unchanged. Check the connection and try again.";
+                opNote.textContent = "We sent that change to the ticket sheet, but it hasn't shown up there yet, so the Home page is unchanged for now. Please wait a moment and try again.";
                 opNote.classList.add("err");
                 syncOpToggle();
                 return;
@@ -4029,11 +4123,13 @@
             opEventToggle.disabled = true;
             opEventNote.classList.remove("err");
             opEventNote.textContent = "Saving…";
-            postSetting("event_day_live", next).then(function (ok) {
+            postSetting("event_day_live", next, function () {
+              if (opEventSaving) { opEventNote.textContent = "Checking the sheet to confirm the change…"; }
+            }).then(function (ok) {
               opEventSaving = false;
               opEventToggle.disabled = false;
               if (!ok) {
-                opEventNote.textContent = "Couldn't reach the ticket sheet, so that change wasn't saved and the Home page is unchanged. Check the connection and try again.";
+                opEventNote.textContent = "We sent that change to the ticket sheet, but it hasn't shown up there yet, so the Home page is unchanged for now. Please wait a moment and try again.";
                 opEventNote.classList.add("err");
                 syncOpToggle();
                 return;
@@ -4055,11 +4151,13 @@
             opFeedbackToggle.disabled = true;
             opFeedbackNote.classList.remove("err");
             opFeedbackNote.textContent = "Saving…";
-            postSetting("feedback_live", next).then(function (ok) {
+            postSetting("feedback_live", next, function () {
+              if (opFeedbackSaving) { opFeedbackNote.textContent = "Checking the sheet to confirm the change…"; }
+            }).then(function (ok) {
               opFeedbackSaving = false;
               opFeedbackToggle.disabled = false;
               if (!ok) {
-                opFeedbackNote.textContent = "Couldn't reach the ticket sheet, so that change wasn't saved and the Home page is unchanged. Check the connection and try again.";
+                opFeedbackNote.textContent = "We sent that change to the ticket sheet, but it hasn't shown up there yet, so the Home page is unchanged for now. Please wait a moment and try again.";
                 opFeedbackNote.classList.add("err");
                 syncOpToggle();
                 return;
