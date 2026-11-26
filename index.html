@@ -1272,6 +1272,7 @@
         background: rgba(246, 196, 83, 0.16); color: var(--gold-bright); border: 1.5px solid rgba(246, 196, 83, 0.55);
       }
       .emcee-bail .eb-status.is-confirmed { background: rgba(34, 179, 88, 0.2); color: #7be495; border-color: rgba(123, 228, 149, 0.55); }
+      .emcee-bail .eb-status.is-cancelled { background: rgba(140, 140, 140, 0.12); color: #a8a29e; border-color: rgba(168, 162, 158, 0.35); opacity: 0.65; }
       .emcee-bail .eb-line { font-size: 1.08rem; color: var(--cream); margin: 6px 0 0; line-height: 1.5; }
       .emcee-bail .eb-line .ea-label { color: var(--ink-soft); font-size: 0.92rem; font-weight: 600; }
       .emcee-bail .eb-meta { font-size: 0.95rem; color: var(--ink-soft); margin: 6px 0 0; }
@@ -4391,9 +4392,12 @@
           }
           emceeBailMsg.hidden = true;
           emceeBailList.innerHTML = bails.map(function (b, i) {
-            var confirmed = b.status.toLowerCase().indexOf("confirm") !== -1 || b.status.toLowerCase().indexOf("issued") !== -1;
+            var statusKey = (b.status || "").trim().toLowerCase();
+            var statusClass = "";
+            if (statusKey === "confirmed" || statusKey === "done") { statusClass = " is-confirmed"; }
+            else if (statusKey === "cancelled") { statusClass = " is-cancelled"; }
             var html = "<li class=\"emcee-bail\"><div class=\"eb-top\"><p class=\"eb-name\">" + (i + 1) + ". " + escHtml(b.name || "—") + "</p>";
-            if (b.status) { html += "<span class=\"eb-status" + (confirmed ? " is-confirmed" : "") + "\">" + escHtml(b.status) + "</span>"; }
+            if (b.status) { html += "<span class=\"eb-status" + statusClass + "\">" + escHtml(b.status) + "</span>"; }
             html += "</div>";
             if (b.song) { html += "<p class=\"eb-line\"><span class=\"ea-label\">Song: </span>" + escHtml(b.song) + "</p>"; }
             if (b.dancers) { html += "<p class=\"eb-line\"><span class=\"ea-label\">To dance: </span>" + escHtml(b.dancers) + "</p>"; }
