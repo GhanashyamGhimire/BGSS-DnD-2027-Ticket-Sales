@@ -1289,6 +1289,71 @@
       .emcee-entry-btn:hover { filter: brightness(1.1); }
       .emcee-entry-btn:focus-visible { outline: 3px solid var(--pink-soft); outline-offset: 2px; }
 
+      /* ---------- printed ticket stubs (confirmation + bookings list) ----------
+         A booking shown as a printed ticket: cream paper, gold border,
+         a perforated edge down the left, the event name across the top,
+         the ticket number big, the buyer's name and a status pill.
+         Used by the post-purchase confirmation (the buyer's own full
+         name) and by the public bookings list (names masked). */
+      .stub-stack { display: grid; gap: 18px; max-width: 540px; margin: 6px auto 0; }
+      .stub {
+        position: relative;
+        background: linear-gradient(165deg, #fffaf0 0%, #ffefd4 100%);
+        color: #38102e;
+        border: 2.5px solid var(--gold-deep);
+        border-radius: 14px;
+        padding: 18px 20px 16px 36px;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45), inset 0 0 0 4px rgba(246, 196, 83, 0.22);
+        text-align: left;
+      }
+      .stub::before {
+        content: ""; position: absolute; left: 16px; top: 12px; bottom: 12px;
+        border-left: 2px dashed rgba(163, 19, 79, 0.4);
+      }
+      .stub-head {
+        margin: 0 0 4px;
+        font-size: 0.72rem; font-weight: 800;
+        letter-spacing: 0.16em; text-transform: uppercase;
+        color: #a3134f;
+      }
+      .stub-num {
+        font-family: "Bungee", cursive; font-weight: 400;
+        font-size: 1.9rem; line-height: 1.1;
+        margin: 0; color: #2a0a2e;
+      }
+      .stub-name { margin: 4px 0 12px; font-size: 1.12rem; font-weight: 700; color: #38102e; }
+      .stub-pill {
+        display: inline-block;
+        font-size: 0.8rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+        border-radius: 999px; padding: 5px 14px;
+        background: #fdeec9; color: #7c4a03; border: 1.5px solid #d9a514;
+      }
+      .stub-pill.is-confirmed { background: #ffd3e6; color: #8f0f5c; border-color: #ff2e88; }
+      .stub-pill.is-issued { background: #d8f5e0; color: #0d6b33; border-color: #22b358; }
+      .stub-pill.is-cancelled { background: #e7e2e7; color: #5d475c; border-color: #a89aa8; }
+      .stub.is-cancelled { opacity: 0.55; filter: grayscale(0.6); }
+
+      /* ---------- post-purchase confirmation ---------- */
+      .confirm-panel h3 { text-align: center; }
+      .confirm-panel .sub { text-align: center; }
+      .confirm-actions {
+        display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+        margin-top: 20px;
+      }
+      .confirm-actions .wa-btn { width: auto; padding-left: 26px; padding-right: 26px; }
+      body.booking-done .sticky-bar { display: none !important; }
+
+      /* ---------- small muted bookings link (Step 2 + confirmation) ---------- */
+      .booked-link-row { text-align: center; margin: 18px 0 0; }
+      .booked-link {
+        color: rgba(243, 217, 236, 0.55);
+        font-size: 0.85rem;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .booked-link:hover { color: var(--gold-bright); }
+      .booked-link:focus-visible { outline: 3px solid var(--pink-soft); outline-offset: 2px; color: var(--gold-bright); }
+
       /* ---------- footer ---------- */
       footer { padding: 54px 0 40px; text-align: center; }
       footer .f-title { font-family: "Yatra One", cursive; font-size: 1.3rem; color: var(--gold-bright); margin: 0 0 6px; }
@@ -1688,8 +1753,30 @@
 
           <button class="wa-btn" type="submit" id="wa-btn">Submit now to secure your booking</button>
           <p class="form-note">This opens WhatsApp with your booking ready to send. Special-consideration tickets are confirmed upon approval.</p>
+          <p class="booked-link-row"><a class="booked-link" href="#bookings">See who's already booked</a></p>
         </div>
       </form>
+
+      <!-- ================= CONFIRMATION =================
+           Replaces the booking form once Step 2 is submitted (the
+           booking itself was already confirmed in the sheet at
+           Reserve). Shown BEFORE WhatsApp opens, so it is what the
+           buyer comes back to — and restored from sessionStorage on
+           a reload in the same tab. The buyer's own tickets print as
+           stubs with their full names and the live status from the
+           bookings feed. -->
+      <div class="panel step-panel confirm-panel" id="confirm-panel" hidden>
+        <div class="done-check" aria-hidden="true">✓</div>
+        <h3>You're all set!</h3>
+        <p class="sub">Your purchase is complete once you've sent the WhatsApp message — we've opened WhatsApp with your booking ready to send, so just tap send there. The committee will verify your payment and reach out to you on WhatsApp for your ticket allocation.</p>
+        <div class="stub-stack" id="confirm-stubs"></div>
+        <p class="form-note" id="confirm-status-note"></p>
+        <div class="confirm-actions">
+          <button class="wa-btn" type="button" id="confirm-wa">Re-open WhatsApp</button>
+          <button class="ed-nav-btn" type="button" id="confirm-refresh">Refresh status</button>
+        </div>
+        <p class="booked-link-row"><a class="booked-link" href="#bookings">See all bookings</a> · <a class="booked-link" href="#pick" id="confirm-more">Book more tickets</a></p>
+      </div>
     </section>
     </div><!-- /view-tickets -->
 
@@ -1983,6 +2070,34 @@
     </section>
     </div><!-- /view-emcee -->
 
+    <div id="view-bookings" hidden>
+    <div class="wrap back-bar">
+      <a class="back-btn" href="#pay"><span class="arrow" aria-hidden="true">←</span> Back to booking</a>
+    </div>
+
+    <!-- ================= BOOKINGS =================
+         Every booking from the sheet's published bookings feed
+         (BOOKINGS_CSV_URL: Name, Ticket numbers, Status — never a
+         phone number or contact detail), each printed as a ticket
+         stub with the buyer's name masked. Reached from the
+         confirmation view and from the small "See who's already
+         booked" link at the bottom of Step 2. Fails closed: an
+         unreachable feed shows a plain "not available yet" message
+         and no stand-in data. -->
+    <section class="wrap" aria-labelledby="bookings-h">
+      <div class="sec-head">
+        <div class="marquee-rule" aria-hidden="true">✦ ✦ ✦</div>
+        <h2 id="bookings-h">Who's <span class="accent">Booked</span></h2>
+        <p>The tickets booked so far, with their latest status from the committee's sheet.</p>
+      </div>
+      <p class="emcee-msg" id="bookings-msg" role="status" style="text-align:center; max-width:640px; margin:0 auto 22px;">Loading the bookings…</p>
+      <div class="stub-stack" id="bookings-list"></div>
+      <div class="ed-controls">
+        <button class="ed-nav-btn" type="button" id="bookings-refresh">Refresh</button>
+      </div>
+    </section>
+    </div><!-- /view-bookings -->
+
     <!-- ================= FOOTER ================= -->
     <footer class="wrap">
       <div class="filmstrip" aria-hidden="true" style="margin-bottom:34px;"></div>
@@ -2068,6 +2183,18 @@
            bails at all, rather than stand-in data. */
         var BAILS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSXeTU81q2D1VhBwVfKZw_lr9qs-XXRJFmuKbJYp2f9_zVlZNguAH3ISf35ISUdKCwwJAeepZgaMmMt/pub?gid=883402173&single=true&output=csv";
 
+        /* BOOKINGS_CSV_URL: published CSV of the sheet's public
+           bookings tab — three columns only: Name, Ticket numbers,
+           Status (Pending / Confirmed / Issued / Cancelled). No phone
+           numbers or contact details are ever in this feed. It feeds
+           the bookings page (#bookings), where names are masked, and
+           the post-purchase confirmation, which reads the live status
+           of the buyer's own tickets from it. If the feed can't be
+           reached, the bookings page shows a plain "not available
+           yet" message and the confirmation keeps its starting
+           "Pending verification" status — never stand-in data. */
+        var BOOKINGS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSXeTU81q2D1VhBwVfKZw_lr9qs-XXRJFmuKbJYp2f9_zVlZNguAH3ISf35ISUdKCwwJAeepZgaMmMt/pub?gid=744802544&single=true&output=csv";
+
         /* ---------- sheet writes: send, then verify via the feeds ----------
            postToSheet POSTs a payload to the Apps Script with
            mode:"no-cors": the request is delivered and the script
@@ -2146,6 +2273,7 @@
             eventdayView = document.getElementById("view-eventday"),
             operatorView = document.getElementById("view-operator"),
             emceeView = document.getElementById("view-emcee"),
+            bookingsView = document.getElementById("view-bookings"),
             homeTitle = document.title;
         function showView() {
           var h = window.location.hash;
@@ -2155,6 +2283,7 @@
             : (h === "#eventday" || h === "#event-day") ? "eventday"
             : h === "#operator" ? "operator"
             : h === "#emcee" ? "emcee"
+            : h === "#bookings" ? "bookings"
             : "home";
           homeView.hidden = view !== "home";
           pickView.hidden = view !== "pick";
@@ -2163,6 +2292,7 @@
           eventdayView.hidden = view !== "eventday";
           operatorView.hidden = view !== "operator";
           emceeView.hidden = view !== "emcee";
+          bookingsView.hidden = view !== "bookings";
           document.body.classList.toggle("pay-view", view === "pay");
           document.title = view === "pay"
             ? "Pay for your tickets — BGSS Annual Dinner & Dance 2027"
@@ -2176,11 +2306,15 @@
                     ? "Event Day operator — BGSS Annual Dinner & Dance 2027"
                     : view === "emcee"
                       ? "Emcee — BGSS Annual Dinner & Dance 2027"
-                      : homeTitle;
+                      : view === "bookings"
+                        ? "Who's booked — BGSS Annual Dinner & Dance 2027"
+                        : homeTitle;
           if (view === "pick" || view === "pay") refreshSold();
           if (view === "pay") renderSelection();
           if (view === "home" || view === "bail" || view === "operator") loadSettings();
           if (view === "emcee" && emceeReady) loadEmcee();
+          if (view === "bookings" && bookingsReady) loadBookings();
+          if (view === "pay" && confirmReady) restoreConfirmation();
           applyBailGate();
           applyEventDayGate();
           window.scrollTo(0, 0);
@@ -3219,8 +3353,292 @@
           lines.push("");
           lines.push("Thank you!");
           var url = "https://wa.me/6598586030?text=" + encodeURIComponent(lines.join("\n"));
+          /* The booking is already confirmed in the sheet (Step 1's
+             Reserve logged it and the feed showed the hold). Swap the
+             payment form for the confirmation view BEFORE WhatsApp
+             opens, so the confirmation — not the untouched form — is
+             what the buyer comes back to, and keep the booking in
+             sessionStorage so a reload in the same tab restores it. */
+          var booking = {
+            buyer: name,
+            tickets: t.list.map(function (n) {
+              return { n: n, name: pickerName(pickerStates[n]) };
+            }),
+            total: t.total,
+            standard: t.s,
+            special: t.p,
+            ref: ref,
+            wa: url,
+            statuses: {}
+          };
+          saveBooking(booking);
+          showConfirmation(booking);
           window.open(url, "_blank", "noopener");
         });
+
+        /* ---------- bookings list + post-purchase confirmation ----------
+           Both read BOOKINGS_CSV_URL (see CONFIG): Name, Ticket
+           numbers, Status — names, numbers and status only, never a
+           phone number or contact detail.
+           - The bookings page (#bookings) prints every booking as a
+             ticket stub with the buyer's name masked (maskName). It
+             is reached from the confirmation view and from the small
+             "See who's already booked" link at the bottom of Step 2.
+           - The confirmation view replaces the Step 2 form once a
+             booking is submitted: the buyer's own tickets as stubs
+             with their FULL names (it is their own booking) and the
+             live status from this same feed — "Pending verification"
+             until the treasurer's allocation shows up as "Issued".
+             The booking is kept in sessionStorage, so the
+             confirmation survives a reload in the same tab.
+           Both fail closed: an unreachable feed shows a plain "not
+           available yet" message on the bookings page, and the
+           confirmation simply keeps its starting status — never
+           stand-in data. */
+        var BOOKINGS_KEY = "bgss-dd-booking";
+        var bookingsMsg = document.getElementById("bookings-msg"),
+            bookingsList = document.getElementById("bookings-list"),
+            confirmPanel = document.getElementById("confirm-panel"),
+            confirmStubs = document.getElementById("confirm-stubs"),
+            confirmNote = document.getElementById("confirm-status-note"),
+            confirmWaBtn = document.getElementById("confirm-wa");
+        var bookingsInFlight = false;
+        /* Set true once this block has run: showView() fires before
+           these are wired up on first load, so it only calls into
+           this block on later navigations — the lines at the end of
+           the block cover a first load straight onto #bookings/#pay. */
+        var bookingsReady = false;
+        var confirmReady = false;
+        var currentBooking = null;
+
+        /* ---------- status wording, shared by every stub ---------- */
+        function statusKey(raw) { return String(raw || "").trim().toLowerCase(); }
+        function statusLabel(raw) {
+          var k = statusKey(raw);
+          if (k === "pending") { return "Pending verification"; }
+          if (k === "confirmed") { return "Confirmed"; }
+          if (k === "issued") { return "Issued"; }
+          if (k === "cancelled" || k === "canceled") { return "Cancelled"; }
+          var t = String(raw || "").trim();
+          return t || "Pending verification";
+        }
+        function ticketStubHtml(numLabel, name, statusRaw) {
+          var k = statusKey(statusRaw);
+          var pill = k === "issued" ? " is-issued"
+            : k === "confirmed" ? " is-confirmed"
+            : (k === "cancelled" || k === "canceled") ? " is-cancelled" : "";
+          return "<article class=\"stub" + (pill === " is-cancelled" ? " is-cancelled" : "") + "\">"
+            + "<p class=\"stub-head\">BGSS Annual Dinner &amp; Dance 2027</p>"
+            + "<p class=\"stub-num\">" + escHtml(numLabel) + "</p>"
+            + "<p class=\"stub-name\">" + escHtml(name) + "</p>"
+            + "<span class=\"stub-pill" + pill + "\">" + escHtml(statusLabel(statusRaw)) + "</span>"
+            + "</article>";
+        }
+
+        /* ---------- name masking (public bookings list only) ----------
+           Mask the tail of each personal-name word — roughly the last
+           third, at least the last 2 letters. Honorifics (aunty,
+           auntie, uncle, didi, bhai, dai) and the word "aka" stay
+           exactly as they are; only the personal name is masked.
+           "Shyam" -> "Shy**", "Nawaratt" -> "Nawar***",
+           "Thuzar aunty" -> "Thuz** aunty",
+           "Uncle Robbin" -> "Uncle Robb**". */
+        var KEEP_WORDS = { aunty: 1, auntie: 1, uncle: 1, didi: 1, bhai: 1, dai: 1, aka: 1 };
+        function maskWord(w) {
+          var lc = w.toLowerCase().replace(/[^a-z]/g, "");
+          if (!lc || KEEP_WORDS[lc]) { return w; }
+          if (w.length <= 2) { return w; }
+          var hide = Math.max(2, Math.round(w.length / 3));
+          if (hide >= w.length) { hide = w.length - 1; }
+          var stars = "";
+          for (var i = 0; i < hide; i++) { stars += "*"; }
+          return w.slice(0, w.length - hide) + stars;
+        }
+        function maskName(name) {
+          return String(name || "").split(/\s+/).map(maskWord).join(" ");
+        }
+
+        /* ---------- the bookings feed ---------- */
+        function cleanFeedName(raw) {
+          /* The feed's Name cell is the booking log's name field —
+             "Ticket 1 — Nitu", or several ";" separated entries for a
+             multi-ticket booking. The stub shows just the name(s). */
+          var names = [];
+          String(raw || "").split(";").forEach(function (p) {
+            var nm = p.replace(/^\s*ticket\s+\d+\s*[—–-]\s*/i, "").trim();
+            if (nm && names.indexOf(nm) === -1) { names.push(nm); }
+          });
+          return names.join(", ");
+        }
+        function parseBookings(text) {
+          var parsed = parseCsv(text || "");
+          if (!parsed.length) { return []; }
+          var header = parsed[0];
+          var idx = {
+            name: emceeColIdx(header, ["name"], 0),
+            nums: emceeColIdx(header, ["ticket numbers", "ticket number", "tickets"], 1),
+            status: emceeColIdx(header, ["status"], 2)
+          };
+          var hasHeader = String(header[idx.name] || "").trim().toLowerCase() === "name"
+            || String(header[idx.status] || "").trim().toLowerCase() === "status";
+          var out = [];
+          for (var ri = hasHeader ? 1 : 0; ri < parsed.length; ri++) {
+            var r = parsed[ri];
+            var name = cleanFeedName(emceeCell(r, idx.name));
+            var m = emceeCell(r, idx.nums).match(/\d+/g);
+            var nums = m ? m.map(function (d) { return parseInt(d, 10); }) : [];
+            if (!name && !nums.length) { continue; }
+            out.push({ name: name, nums: nums, status: emceeCell(r, idx.status) });
+          }
+          return out;
+        }
+        function fetchBookings() {
+          if (!BOOKINGS_CSV_URL || !window.fetch) { return Promise.resolve(null); }
+          var sep = BOOKINGS_CSV_URL.indexOf("?") === -1 ? "?" : "&";
+          return fetch(BOOKINGS_CSV_URL + sep + "cb=" + Date.now(), { cache: "no-store" }).then(function (res) {
+            if (!res.ok) { throw new Error("bookings fetch failed"); }
+            return res.text();
+          }).then(function (text) {
+            return parseBookings(text);
+          }).catch(function () { return null; });
+        }
+
+        /* ---------- the bookings page ---------- */
+        function renderBookingsPage(rows) {
+          if (!rows) {
+            bookingsList.innerHTML = "";
+            bookingsMsg.hidden = false;
+            bookingsMsg.textContent = "The bookings list is not available yet — it couldn't be reached just now, so nothing is shown rather than risk showing the wrong bookings. Tap Refresh to try again.";
+            return;
+          }
+          if (!rows.length) {
+            bookingsList.innerHTML = "";
+            bookingsMsg.hidden = false;
+            bookingsMsg.textContent = "No tickets have been booked yet — yours could be the first stub here!";
+            return;
+          }
+          bookingsMsg.hidden = true;
+          bookingsList.innerHTML = rows.map(function (b) {
+            var label = b.nums.length === 1
+              ? "Ticket No. " + b.nums[0]
+              : b.nums.length > 1
+                ? "Tickets " + b.nums.map(function (n) { return "No. " + n; }).join(" · ")
+                : "Ticket";
+            return ticketStubHtml(label, maskName(b.name) || "BGSS guest", b.status);
+          }).join("");
+        }
+        function loadBookings() {
+          if (bookingsInFlight) { return; }
+          bookingsList.innerHTML = "";
+          if (!BOOKINGS_CSV_URL) {
+            bookingsMsg.hidden = false;
+            bookingsMsg.textContent = "The bookings list is not available yet — it will appear here once the committee publishes the bookings from the ticket sheet.";
+            return;
+          }
+          if (!window.fetch) {
+            bookingsMsg.hidden = false;
+            bookingsMsg.textContent = "The bookings list is not available yet — this browser can't reach the bookings feed, so nothing is shown rather than risk showing the wrong bookings.";
+            return;
+          }
+          bookingsInFlight = true;
+          bookingsMsg.hidden = false;
+          bookingsMsg.textContent = "Loading the bookings…";
+          fetchBookings().then(function (rows) {
+            bookingsInFlight = false;
+            renderBookingsPage(rows);
+          });
+        }
+        document.getElementById("bookings-refresh").addEventListener("click", loadBookings);
+
+        /* ---------- the confirmation view ---------- */
+        function saveBooking(b) {
+          currentBooking = b;
+          try { window.sessionStorage.setItem(BOOKINGS_KEY, JSON.stringify(b)); } catch (e) {}
+        }
+        function readBooking() {
+          if (currentBooking) { return currentBooking; }
+          try {
+            var raw = window.sessionStorage.getItem(BOOKINGS_KEY);
+            if (raw) { currentBooking = JSON.parse(raw); }
+          } catch (e) {}
+          return currentBooking;
+        }
+        function renderConfirmStubs() {
+          var b = currentBooking;
+          if (!b) { return; }
+          confirmStubs.innerHTML = b.tickets.map(function (tk) {
+            var st = (b.statuses && b.statuses[tk.n]) || "Pending";
+            return ticketStubHtml("Ticket No. " + tk.n, tk.name, st);
+          }).join("");
+        }
+        function showConfirmation(b) {
+          currentBooking = b;
+          bookForm.hidden = true;
+          confirmPanel.hidden = false;
+          document.body.classList.add("booking-done");
+          renderConfirmStubs();
+          confirmNote.textContent = "Your status updates here as the committee checks payments — “Pending verification” becomes “Issued” once your tickets are allocated.";
+          refreshConfirmStatus();
+          confirmPanel.scrollIntoView({ block: "start", behavior: "smooth" });
+        }
+        function refreshConfirmStatus() {
+          var b = currentBooking;
+          if (!b) { return; }
+          fetchBookings().then(function (rows) {
+            if (!rows || !currentBooking) { return; }
+            var changed = false;
+            b.tickets.forEach(function (tk) {
+              var best = null;
+              rows.forEach(function (r) {
+                if (r.nums.indexOf(tk.n) === -1) { return; }
+                if (!best) { best = r; }
+                if (r.name && tk.name && r.name.toLowerCase().indexOf(tk.name.toLowerCase()) !== -1) { best = r; }
+              });
+              if (best && best.status) {
+                if (!b.statuses) { b.statuses = {}; }
+                if (b.statuses[tk.n] !== best.status) { b.statuses[tk.n] = best.status; changed = true; }
+              }
+            });
+            if (changed) {
+              try { window.sessionStorage.setItem(BOOKINGS_KEY, JSON.stringify(b)); } catch (e) {}
+              renderConfirmStubs();
+            }
+          });
+        }
+        function restoreConfirmation() {
+          var b = readBooking();
+          if (!b || !b.tickets || !b.tickets.length) { return; }
+          if (!confirmPanel.hidden) { refreshConfirmStatus(); return; }
+          showConfirmation(b);
+        }
+        function clearConfirmation() {
+          currentBooking = null;
+          try { window.sessionStorage.removeItem(BOOKINGS_KEY); } catch (e) {}
+          confirmPanel.hidden = true;
+          bookForm.hidden = false;
+          document.body.classList.remove("booking-done");
+          /* Back to a fresh Step 1 so a new booking can start. */
+          reserveSeq++;
+          reserved = false;
+          reserving = false;
+          reserveFailed = false;
+          step2Panel.hidden = true;
+          reserveBtn.disabled = false;
+          reserveBtn.textContent = RESERVE_LABEL;
+          updateBarBtn();
+          if (typeof updatePayCue === "function") { updatePayCue(); }
+          renderCapacity();
+        }
+        confirmWaBtn.addEventListener("click", function () {
+          var b = readBooking();
+          if (b && b.wa) { window.open(b.wa, "_blank", "noopener"); }
+        });
+        document.getElementById("confirm-refresh").addEventListener("click", refreshConfirmStatus);
+        document.getElementById("confirm-more").addEventListener("click", function () { clearConfirmation(); });
+        bookingsReady = true;
+        confirmReady = true;
+        if (!bookingsView.hidden) { loadBookings(); }
+        if (!ticketsView.hidden) { restoreConfirmation(); }
 
         /* ---------- request a bail ----------
            A bail request uses the SAME member picker as the ticket
