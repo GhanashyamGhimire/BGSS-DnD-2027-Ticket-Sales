@@ -775,10 +775,16 @@
       .legend .sw-sold { background: #5d475c; opacity: 0.55; }
       .legend .sw-held { background: #b45309; border-color: var(--gold); }
       .pick-grid {
-        display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+        display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;
         max-width: 880px; margin: 0 auto;
       }
-      @media (min-width: 760px) { .pick-grid { grid-template-columns: repeat(10, 1fr); } }
+      /* 4 across on mobile, 8 across from 760px up. Flex (not grid) so
+         the partial last row — 51 tiles (50 tickets + the 9¾ tile)
+         leaves 3 over at both widths — centres itself in the middle
+         instead of hanging off the left. Each tile's flex-basis is
+         (100% minus the gaps in its row) divided by the column count. */
+      .pick-grid .ticket-slot { flex: 0 0 calc((100% - 30px) / 4); }
+      @media (min-width: 760px) { .pick-grid .ticket-slot { flex-basis: calc((100% - 70px) / 8); } }
       .ticket-slot {
         display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
         padding: 10px 2px 8px;
